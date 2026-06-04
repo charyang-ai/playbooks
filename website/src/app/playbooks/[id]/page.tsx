@@ -7,6 +7,7 @@ import rehypeRaw from "rehype-raw";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import { remarkAlert } from "remark-github-blockquote-alert";
 import "katex/dist/katex.min.css";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -226,18 +227,22 @@ function HaloPreinstalledDropdown({
             If you need to reinstall or configure it manually, follow the instructions below:
           </div>
           <ReactMarkdown
-            remarkPlugins={[remarkGfm, remarkMath]}
+            remarkPlugins={[remarkGfm, remarkMath, remarkAlert]}
             rehypePlugins={[rehypeRaw, rehypeKatex]}
             components={{
               h1: ({ children }) => <h1 className="md-h1">{children}</h1>,
               h2: ({ children }) => <h2 className="md-h2">{children}</h2>,
               h3: ({ children }) => <h3 className="md-h3">{children}</h3>,
               h4: ({ children }) => <h4 className="md-h4">{children}</h4>,
-              p: ({ children }) => <p className="md-p">{children}</p>,
+              p: ({ children, className }: { children?: React.ReactNode; className?: string }) => (
+                <p className={className ? `md-p ${className}` : "md-p"}>{children}</p>
+              ),
               ul: ({ children }) => <ul className="md-ul">{children}</ul>,
               ol: ({ children }) => <ol className="md-ol">{children}</ol>,
               li: ({ children }) => <li className="md-li">{children}</li>,
-              blockquote: ({ children }) => <blockquote className="md-blockquote">{children}</blockquote>,
+              blockquote: ({ children, className }: { children?: React.ReactNode; className?: string }) => (
+                <blockquote className={className ? `md-blockquote ${className}` : "md-blockquote"}>{children}</blockquote>
+              ),
               a: ({ href, children }) => (
                 <a href={href} className="md-link" target="_blank" rel="noopener noreferrer">
                   {children}
@@ -358,18 +363,22 @@ function HaloSetupContent({
 }) {
   return (
     <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
+        remarkPlugins={[remarkGfm, remarkMath, remarkAlert]}
         rehypePlugins={[rehypeRaw, rehypeKatex]}
         components={{
           h1: ({ children }) => <h1 className="md-h1">{children}</h1>,
           h2: ({ children }) => <h2 className="md-h2">{children}</h2>,
           h3: ({ children }) => <h3 className="md-h3">{children}</h3>,
           h4: ({ children }) => <h4 className="md-h4">{children}</h4>,
-          p: ({ children }) => <p className="md-p">{children}</p>,
+          p: ({ children, className }: { children?: React.ReactNode; className?: string }) => (
+            <p className={className ? `md-p ${className}` : "md-p"}>{children}</p>
+          ),
           ul: ({ children }) => <ul className="md-ul">{children}</ul>,
           ol: ({ children }) => <ol className="md-ol">{children}</ol>,
           li: ({ children }) => <li className="md-li">{children}</li>,
-          blockquote: ({ children }) => <blockquote className="md-blockquote">{children}</blockquote>,
+          blockquote: ({ children, className }: { children?: React.ReactNode; className?: string }) => (
+            <blockquote className={className ? `md-blockquote ${className}` : "md-blockquote"}>{children}</blockquote>
+          ),
           a: ({ href, children }) => (
             <a href={href} className="md-link" target="_blank" rel="noopener noreferrer">
               {children}
@@ -628,6 +637,107 @@ function filterContentByDevice(content: string, devices: string[]): string {
   } while (result !== prev);
 
   return result;
+}
+
+/**
+ * Parses `key=value` / `key="value with spaces"` attribute strings, mirroring
+ * the parser used by the test runner (run_playbook_tests.py).
+ */
+function parseTagAttributes(attrString: string): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  const pattern = /(\w+)=(?:"([^"]+)"|(\S+))/g;
+  let m: RegExpExecArray | null;
+  while ((m = pattern.exec(attrString)) !== null) {
+    attrs[m[1]] = m[2] !== undefined ? m[2] : m[3];
+  }
+  return attrs;
+}
+
+/**
+ * Extracts reusable @var definitions, keyed by var id then device. Mirrors the
+ * test runner's resolution: an inline `device=` attribute takes precedence,
+ * otherwise the device(s) are inferred from the enclosing @device: block, and
+ * definitions with neither are stored under the "all" key.
+ *
+ * Tags supported:
+ * <!-- @var:id=hf_model device=halo,halo_box value="openai/gpt-oss-20b" -->
+ * <!-- @var:id=api_port value="13305" -->
+ */
+function extractVarDefs(content: string): Record<string, Record<string, string>> {
+  const defs: Record<string, Record<string, string>> = {};
+  if (!content) return defs;
+
+  // Resolve @device: block ranges with a stack so the innermost enclosing
+  // block can be matched for each @var definition.
+  const blocks: { devices: string; start: number; end: number }[] = [];
+  const stack: { devices: string; start: number }[] = [];
+  const tagPattern = /<!-- @device:([\w,]+) -->|<!-- @device:end -->/g;
+  let tm: RegExpExecArray | null;
+  while ((tm = tagPattern.exec(content)) !== null) {
+    if (tm[1]) {
+      stack.push({ devices: tm[1], start: tm.index });
+    } else {
+      const open = stack.pop();
+      if (open) blocks.push({ devices: open.devices, start: open.start, end: tm.index });
+    }
+  }
+  blocks.sort((a, b) => b.start - a.start); // innermost-first
+
+  const varPattern = /<!-- @var:([^>]+) -->/g;
+  let vm: RegExpExecArray | null;
+  while ((vm = varPattern.exec(content)) !== null) {
+    const attrs = parseTagAttributes(vm[1]);
+    const id = attrs["id"];
+    const value = attrs["value"];
+    if (!id || value === undefined) continue;
+
+    let deviceValue: string | undefined = attrs["device"];
+    if (deviceValue === undefined) {
+      const pos = vm.index;
+      for (const b of blocks) {
+        if (b.start <= pos && pos < b.end) {
+          deviceValue = b.devices;
+          break;
+        }
+      }
+    }
+
+    if (!defs[id]) defs[id] = {};
+    if (deviceValue) {
+      for (const d of deviceValue.split(",").map(s => s.trim()).filter(Boolean)) {
+        defs[id][d] = value;
+      }
+    } else {
+      defs[id]["all"] = value;
+    }
+  }
+
+  return defs;
+}
+
+/**
+ * Substitutes `${name}` placeholders with device-aware @var values and strips
+ * the @var definition comments. Only placeholders whose name matches a declared
+ * @var id are touched; ordinary `${env}` references are left untouched. The
+ * value mapped to the active device is preferred, falling back to "all".
+ */
+function substituteVars(
+  content: string,
+  varDefs: Record<string, Record<string, string>>,
+  devices: string[]
+): string {
+  if (!content) return "";
+  const result = content.replace(/[ \t]*<!-- @var:[^>]+ -->\n?/g, "");
+  if (Object.keys(varDefs).length === 0) return result;
+
+  const device = devices.length > 0 ? devices[0] : null;
+  return result.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (match, name: string) => {
+    const mapping = varDefs[name];
+    if (!mapping) return match;
+    if (device && mapping[device] !== undefined) return mapping[device];
+    if (mapping["all"] !== undefined) return mapping["all"];
+    return match;
+  });
 }
 
 /**
@@ -1413,12 +1523,18 @@ export default function PlaybookPage({ params, searchParams }: { params: Promise
     ? ["halo_box"]
     : selectedDevice ? [selectedDevice] : [];
 
-  // Transform relative image paths to API routes, filter by OS/device, and transform preinstalled/setup blocks
+  // Transform relative image paths to API routes, filter by OS/device, substitute
+  // device-aware @var values, and transform preinstalled/setup blocks.
+  const varDefs = playbook?.content ? extractVarDefs(playbook.content) : {};
   const filteredContent = playbook?.content
     ? transformSetupBlocks(
         transformPreinstalledBlocks(
-          filterContentByDevice(
-            filterContentByOS(playbook.content, selectedPlatform),
+          substituteVars(
+            filterContentByDevice(
+              filterContentByOS(playbook.content, selectedPlatform),
+              activeDevices
+            ),
+            varDefs,
             activeDevices
           ),
           selectedPlatform,
@@ -1454,11 +1570,15 @@ export default function PlaybookPage({ params, searchParams }: { params: Promise
       const headingId = slugify(text);
       return <h4 id={headingId} className="md-h4 scroll-mt-28">{children}</h4>;
     },
-    p: ({ children }: { children?: React.ReactNode }) => <p className="md-p">{children}</p>,
+    p: ({ children, className }: { children?: React.ReactNode; className?: string }) => (
+      <p className={className ? `md-p ${className}` : "md-p"}>{children}</p>
+    ),
     ul: ({ children }: { children?: React.ReactNode }) => <ul className="md-ul">{children}</ul>,
     ol: ({ children }: { children?: React.ReactNode }) => <ol className="md-ol">{children}</ol>,
     li: ({ children }: { children?: React.ReactNode }) => <li className="md-li">{children}</li>,
-    blockquote: ({ children }: { children?: React.ReactNode }) => <blockquote className="md-blockquote">{children}</blockquote>,
+    blockquote: ({ children, className }: { children?: React.ReactNode; className?: string }) => (
+      <blockquote className={className ? `md-blockquote ${className}` : "md-blockquote"}>{children}</blockquote>
+    ),
     a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
       // Check if this is a link to a code file in the assets folder
       const isAssetCodeFile = href && 
@@ -2027,7 +2147,7 @@ export default function PlaybookPage({ params, searchParams }: { params: Promise
                     {filteredContent ? (
                       <article ref={contentRef} className="playbook-content prose prose-invert max-w-none">
                         <ReactMarkdown
-                          remarkPlugins={[remarkGfm, remarkMath]}
+                          remarkPlugins={[remarkGfm, remarkMath, remarkAlert]}
                           rehypePlugins={[rehypeRaw, rehypeKatex]}
                           components={markdownComponents}
                         >

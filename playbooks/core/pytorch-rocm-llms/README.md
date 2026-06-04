@@ -11,12 +11,17 @@ SPDX-License-Identifier: MIT
 
 ## Overview
 
+<!-- @github-only -->
+> [!IMPORTANT]
+> This playbook uses special tags that GitHub cannot render. Please visit [amd.com/playbooks](https://amd.com/playbooks) to correctly preview this content.
+<!-- @github-only:end -->
+
 Want to run powerful AI language models on your own hardware? This guide shows you how.
 This tutorial uses PyTorch powered by AMD ROCm™ software to run models that can summarize documents, answer questions, generate text, and more, all running locally.
 
 ## What You'll Learn
 
-- Run LLMs like gpt-oss-20b and Mistral-7B-Instruct locally using PyTorch and ROCm
+- Run LLMs like gpt-oss-20b and qwen3.5-4B locally using PyTorch and ROCm
 - Create a document summarization tool using LLMs
 
 ## Initial Setup 
@@ -94,6 +99,11 @@ source llm-env/bin/activate
 
 ### Installing Additional Dependencies
 
+<!-- @var:id=hf_model device=halo,halo_box value="openai/gpt-oss-20b" -->
+<!-- @var:id=hf_model device=stx,krk,rx7900xt,rx9070xt value="Qwen/Qwen3.5-4B" -->
+
+<!-- @device:halo,halo_box -->
+
 <!-- @os:windows -->
 <!-- @test:id=install-deps timeout=300 setup=activate-venv -->
 ```bash
@@ -109,6 +119,26 @@ pip install transformers safetensors accelerate sentencepiece protobuf
 ```
 <!-- @test:end -->
 <!-- @os:end -->
+<!-- @device:end -->
+
+<!-- @device:stx,krk,rx7900xt,rx9070xt -->
+
+<!-- @os:windows -->
+<!-- @test:id=install-deps timeout=300 setup=activate-venv -->
+```bash
+pip install transformers==5.10.1 safetensors accelerate sentencepiece protobuf
+```
+<!-- @test:end -->
+<!-- @os:end -->
+
+<!-- @os:linux -->
+<!-- @test:id=install-deps timeout=300 setup=activate-venv -->
+```bash
+pip install "transformers>=5.9.0" safetensors accelerate sentencepiece protobuf
+```
+<!-- @test:end -->
+<!-- @os:end -->
+<!-- @device:end -->
 
 ## Quick Start with Example Scripts
 
@@ -143,7 +173,7 @@ for script in ['run_llm.py', 'summarizer.py']:
 <!-- @test:end -->
 
 Both scripts support:
-- Model selection: `openai/gpt-oss-20b` (default) or other models such as Mistral
+- Model selection via `--model` flag
 - Chat template formatting for proper model prompting, especially useful for document summarization
 
 ## Loading and Running Your First LLM
@@ -163,12 +193,13 @@ print("PASS: All imports successful")
 ```
 <!-- @test:end -->
 
+<!-- @device:halo,halo_box -->
 <!-- @test:id=run-model timeout=600 hidden=True setup=activate-venv -->
 ```python
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-model_name = "openai/gpt-oss-20b"
+model_name = "${hf_model}"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForCausalLM.from_pretrained(
     model_name,
@@ -177,11 +208,27 @@ model = AutoModelForCausalLM.from_pretrained(
 )
 ```
 <!-- @test:end -->
+<!-- @device:end -->
+
+<!-- @device:stx,krk,rx7900xt,rx9070xt -->
+<!-- @test:id=run-model timeout=600 hidden=True setup=activate-venv -->
+```python
+import torch
+from transformers import AutoTokenizer, AutoModelForImageTextToText
+
+model_name = "${hf_model}"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForImageTextToText.from_pretrained(
+    model_name,
+    torch_dtype=torch.bfloat16,
+    device_map="auto"
+)
+```
+<!-- @test:end -->
+<!-- @device:end -->
 
 ```python
-# Choose your model
-model_name = "openai/gpt-oss-20b"
-
+model_name = "${hf_model}"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForCausalLM.from_pretrained(
     model_name,
@@ -200,11 +247,13 @@ messages = [
 ```
 
 Try out the downloaded script:
+
 <!-- @test:id=run-llm-simple timeout=600 setup=activate-venv -->
 ```bash
-python run_llm.py
+python run_llm.py --model ${hf_model}
 ```
 <!-- @test:end -->
+
 
 ## Building a Document Summarizer
 
@@ -214,15 +263,15 @@ The script is designed to work out of the box. Open the script in an editor to e
 
 <!-- @test:id=run-summarizer timeout=1000 hidden=True setup=activate-venv -->
 ```bash
-python summarizer.py
+python summarizer.py --model ${hf_model}
 ```
 <!-- @test:end -->
 
 ### Usage Examples
 
 ```bash
-# Summarize a large piece of text (at Line 152 in summarizer.py)
-python summarizer.py
+# Summarize the built-in example text (defaults to openai/gpt-oss-20b)
+python summarizer.py --model ${hf_model}
 
 # Summarize a text file
 python summarizer.py --file example_document.txt
@@ -238,7 +287,7 @@ python summarizer.py --file document.txt --max-length 400
 
 | Parameter | What It Controls | Typical Values |
 |-----------|------------------|----------------|
-| `max_new_tokens` | The maximum lenght of the LLM's output | Use 50–500 tokens for summaries. (1 token is about 0.75 English words) |
+| `max_new_tokens` | The maximum length of the LLM's output | Use 50–500 tokens for summaries. (1 token is about 0.75 English words) |
 | `temperature` | Creativity. Low values make it focused, while high values come with more unpredictability | - **0.1–0.3**: Focused, deterministic (good for summaries) <br> **0.5–0.7**: Balanced(general use) <br> **0.8–1.0**: Creative, varied (brainstorming) |
 | `top_p` | Nucleus Sampling - Low values limit the model to more narrow outputs | **0.1-0.5**: Strict, predictable <br> **0.9-0.95**: (standard, natural, conversational) |
 
